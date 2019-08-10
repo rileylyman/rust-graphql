@@ -57,6 +57,10 @@ enum QueryResult {
     Failure,
 }
 
+enum ParseResult {
+    Ok()
+}
+
 fn parse_schema(path: &Path) -> std::io::Result<Schema> {
     unimplemented!()
 }
@@ -71,17 +75,17 @@ fn construct_schema(path: &str) -> std::io::Result<Schema> {
     enum State {
         LookingForNextType,
         LookingForOpeningBrace,
-        LookingForBody,
-        LookingForClosingBrace,
+        LookingForBodyOrClosingBrace,
     }
 
-    let state = State::LookingForNextType;
+    let mut state = State::LookingForNextType;
     let lines = contents.split('\n');
+    let mut type_name;
+    let mut fields = HashMap::new();
     for line in lines {
         match state {
             State::LookingForNextType => {
-                let mut name;
-                let words = line.split(' ').collect::<Vec<&str>>();
+                let words = line.split_whitespace().collect::<Vec<&str>>();
                 if let Some(first) = words.get(0) {
                     if *first != "type" {
                         panic!("Parse Error: Expected keyword `type`")
@@ -94,25 +98,61 @@ fn construct_schema(path: &str) -> std::io::Result<Schema> {
                 }
 
                 if let Some(second) = words.get(1) {
-                    name = second.to_string();
+                    type_name = second.to_string();
                 } else {
                     panic!("Parse Error: Expected type name after keyword `type`")
                 }
 
-                state = State::LookingForOpeningBrace;
+                if let Some(third) = words.get(2) {
+                    if *third == "{" {
+                        state = State::LookingForBodyOrClosingBrace;
+                    }
+                    else {
+                        panic!(format!("Parse Error: Unexpected Token: {}", third))
+                    }
+                } else {
+                    state = State::LookingForOpeningBrace;
+                }
+
             }
-            State::LookingForBody => {
-                let name_and_type = line.split(':').collect::<Vec<&str>>();
+            State::LookingForBodyOrClosingBrace => {
+                let mut maybe_bracket = line.split_whitespace().collect::<Vec<&str>>();
+                if maybe_bracket.len() == 1 {
+                    if *maybe_bracket.get(0).unwrap() == "}" {
+                        //
+                        // push to types and clean up
+                        //
+                        continue;
+                    } else {
+                        return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
+                    }
+                }
+
+                let mut name_and_type = line.split(':').collect::<Vec<&str>>();
+                for s in name_and_type.iter_mut() {
+                    *s = s.trim();
+                }
                 if name_and_type.len() != 2 {
-                    return Err("j");
+                    return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
                 }
                 if let (Some(name), Some(ty)) =
                        (name_and_type.get(0), name_and_type.get(1)) 
                 { 
-                    
+                    let data_type = if *ty == "Int" {
+                        DataType::Int(false)
+                    } else if *ty == "String" {
+                        DataType::String(false)
+                    } else if *ty == "[Int]" {
+                        DataType::Int(true)
+                    } else if *ty == "[String]" {
+                        DataType::String(true)
+                    } else {
+                        DataType::Int(false)
+                    };
+                    fields.insert(name.to_string(), data_type);
                 } 
                 else {
-                    return Err("j");
+                    return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
                 }
             }
         }
